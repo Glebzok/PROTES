@@ -1,12 +1,13 @@
 import jax
 import jax.numpy as jnp
 import optax
+import teneva
 from time import perf_counter as tpc
 
 
 def protes(f, d, n, m=None, k=100, k_top=10, k_gd=1, lr=5.E-2, r=5, seed=0,
-           is_max=False, log=False, info={}, P=None,
-           with_info_i_opt_list=False, with_info_full=False):
+           is_max=False, log=False, info={}, P=None, init_I=None, warmup_iters=1e3,
+           with_info_i_opt_list=False, with_info_full=False, callback=None):
     time = tpc()
     info.update({'d': d, 'n': n, 'm_max': m, 'm': 0, 'k': k, 'k_top': k_top,
         'k_gd': k_gd, 'lr': lr, 'r': r, 'seed': seed, 'is_max': is_max,
@@ -47,31 +48,55 @@ def protes(f, d, n, m=None, k=100, k_top=10, k_gd=1, lr=5.E-2, r=5, seed=0,
         P_cur = jax.tree_util.tree_map(lambda p, u: p + u, P_cur, updates)
         return state, P_cur
 
+    is_new = True
+
     while True:
-        Pl, Pm, Pr = P
-        Zm = interface_matrices(Pm, Pr)
-        rng, key = jax.random.split(rng)
-        I = sample(Pl, Pm, Pr, Zm, jax.random.split(key, k))
+        
+        if init_I is None:
+            Pl, Pm, Pr = P
+            Zm = interface_matrices(Pm, Pr)
+            rng, key = jax.random.split(rng)
+            I = sample(Pl, Pm, Pr, Zm, jax.random.split(key, k))
+        else:
+            I = init_I
 
         y = f(I)
+
         if y is None:
             break
-
+        
         y = jnp.array(y)
         info['m'] += y.shape[0]
 
         is_new = _process(P, I, y, info, with_info_i_opt_list, with_info_full)
 
-        if info['m_max'] and info['m'] >= info['m_max']:
+        if info['m'] >= m:
+            info['t'] = tpc() - time
             break
 
         ind = jnp.argsort(y, kind='stable')
-        ind = (ind[::-1] if is_max else ind)[:k_top]
+        ind = (ind[::-1] if is_max else ind)
+        if init_I is None:
+            n_iter = k_gd
+            ind = ind[:k_top]
+        else:
+            init_I = None
+            n_iter = int(warmup_iters)
+            ind = ind[:1]
 
-        for _ in range(k_gd):
+        for _ in range(n_iter):
+
+            # print(n_iter, loss(P, info['i_opt'][None, ...]))
+
             state, P = optimize(state, P, I[ind, :])
 
+            # print('a', loss(P, info['i_opt'][None, ...]))
+
         info['t'] = tpc() - time
+
+        if callback:
+            callback(info)
+
         _log(info, log, is_new)
 
     info['t'] = tpc() - time
