@@ -74,7 +74,7 @@ def protes(f, d, n, m=None, k=100, k_top=10, k_gd=1, lr=5.E-2, r=5, seed=0,
             info['t'] = tpc() - time
             break
 
-        ind = jnp.argsort(y, kind='stable')
+        ind = jnp.argsort(y, stable=True)
         ind = (ind[::-1] if is_max else ind)
         if init_I is None:
             n_iter = k_gd
